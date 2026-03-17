@@ -1,50 +1,48 @@
 import logging
 
+import cv2
 import numpy as np
-import torch
-import torch.nn as nn
-from sklearn.metrics.pairwise import cosine_similarity
-from torchvision import models
-from torchvision.models import ResNet18_Weights
+from PIL import Image
 
 
 logger = logging.getLogger("signature-verifier.embedding")
 
+EMBEDDING_SIZE = (128, 128)
 
-class SignatureEmbeddingModel:
-    """Extracts fixed-length signature embeddings with a ResNet18 backbone."""
 
-    def __init__(self) -> None:
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self._load_model()
-        self.model.eval()
-        logger.info("Embedding model loaded on device: %s", self.device)
+def get_embedding(image: Image.Image | np.ndarray) -> np.ndarray:
+    """Build a lightweight embedding by resizing, grayscaling, normalizing, and flattening."""
+    if isinstance(image, Image.Image):
+        image_array = np.array(image)
+    else:
+        image_array = np.asarray(image)
 
-    def _load_model(self) -> nn.Module:
-        try:
-            weights = ResNet18_Weights.DEFAULT
-            model = models.resnet18(weights=weights)
-            logger.info("Loaded ResNet18 with pretrained ImageNet weights.")
-        except Exception as exc:
-            logger.warning(
-                "Could not load pretrained ResNet18 weights (%s). Falling back to random weights.",
-                exc,
-            )
-            model = models.resnet18(weights=None)
+    if image_array.size == 0:
+        raise ValueError("Image data is empty.")
 
-        # Replace the classifier with an identity mapping to expose embeddings.
-        model.fc = nn.Identity()
-        return model.to(self.device)
+    if image_array.ndim == 3:
+        gray_image = cv2.cvtColor(image_array, cv2.COLOR_RGB2GRAY)
+    elif image_array.ndim == 2:
+        gray_image = image_array
+    else:
+        raise ValueError("Unsupported image format for embedding extraction.")
 
-    @torch.inference_mode()
-    def get_embedding(self, image_tensor: torch.Tensor) -> np.ndarray:
-        if image_tensor.ndim != 4:
-            raise ValueError("Expected image tensor with shape [batch, channels, height, width].")
+    resized = cv2.resize(gray_image, EMBEDDING_SIZE, interpolation=cv2.INTER_AREA)
+    normalized = resized.astype(np.float32) / 255.0
+    return normalized.flatten()
 
-        embedding = self.model(image_tensor.to(self.device))
-        return embedding.cpu().numpy()
 
-    def compare_embeddings(self, emb1: np.ndarray, emb2: np.ndarray) -> float:
-        similarity = cosine_similarity(emb1, emb2)[0][0]
-        # Clamp small numeric overflow from cosine similarity.
-        return float(np.clip(similarity, 0.0, 1.0))
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    vector_a = np.asarray(a, dtype=np.float32).reshape(-1)
+    vector_b = np.asarray(b, dtype=np.float32).reshape(-1)
+
+    norm_a = np.linalg.norm(vector_a)
+    norm_b = np.linalg.norm(vector_b)
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+
+    similarity = float(np.dot(vector_a, vector_b) / (norm_a * norm_b))
+    return float(np.clip(similarity, 0.0, 1.0))
+
+
+logger.info("Lightweight embedding utilities initialized without heavy ML dependencies.")

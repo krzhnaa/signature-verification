@@ -1,9 +1,6 @@
-fastapi==0.115.8
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20
-torch>=2.2.0
-torchvision>=0.17.0
-opencv-python==4.11.0.86
-Pillow==11.1.0
-scikit-learn==1.6.1
-numpy==2.2.3
+fastapi
+uvicorn
+opencv-python
+numpy
+pillow
+python-multipart

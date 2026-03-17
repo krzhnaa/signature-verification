@@ -3,22 +3,13 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 from fastapi import HTTPException
 from PIL import Image
-from torchvision import transforms
 
 
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-CANVAS_SIZE = 224
+CANVAS_SIZE = 128
 PADDING = 18
-
-transform_pipeline = transforms.Compose(
-    [
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.485, 0.485], std=[0.229, 0.229, 0.229]),
-    ]
-)
 
 
 def _validate_extension(filename: str | None) -> None:
@@ -38,7 +29,8 @@ def _load_pil_image_from_bytes(file_bytes: bytes, filename: str | None) -> Image
     _validate_extension(filename)
 
     try:
-        return Image.open(BytesIO(file_bytes))
+        with Image.open(BytesIO(file_bytes)) as image:
+            return image.convert("RGB")
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid image file.") from exc
 
@@ -51,7 +43,8 @@ def _load_pil_image_from_path(path: str | Path) -> Image.Image:
     _validate_extension(file_path.name)
 
     try:
-        return Image.open(file_path)
+        with Image.open(file_path) as image:
+            return image.convert("RGB")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid dataset image: {file_path.name}") from exc
 
@@ -106,7 +99,7 @@ def _center_signature(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     y_offset = (CANVAS_SIZE - resized_h) // 2
     centered_mask[y_offset : y_offset + resized_h, x_offset : x_offset + resized_w] = resized
 
-    # White paper background with dark strokes for the CNN input.
+    # White paper background with dark strokes for stable lightweight comparisons.
     signature_image = np.full((CANVAS_SIZE, CANVAS_SIZE), 255, dtype=np.uint8)
     signature_image[centered_mask > 0] = 0
     aspect_ratio = float(w) / float(max(h, 1))
@@ -136,17 +129,15 @@ def _hu_moments(mask: np.ndarray) -> np.ndarray:
     return hu.astype(np.float32)
 
 
-def _build_signature_sample(pil_image: Image.Image) -> dict[str, np.ndarray | torch.Tensor]:
+def _build_signature_sample(pil_image: Image.Image) -> dict[str, np.ndarray | Image.Image]:
     gray_array = np.array(pil_image.convert("L"))
     signature_mask = _create_signature_mask(gray_array)
     centered_mask, signature_image, aspect_ratio = _center_signature(signature_mask)
 
-    three_channel = cv2.cvtColor(signature_image, cv2.COLOR_GRAY2RGB)
-    processed_image = Image.fromarray(three_channel)
-    tensor = transform_pipeline(processed_image).unsqueeze(0)
+    processed_image = Image.fromarray(signature_image)
 
     return {
-        "tensor": tensor,
+        "image": processed_image,
         "mask": centered_mask,
         "ink_ratio": float(np.count_nonzero(centered_mask)) / float(centered_mask.size),
         "aspect_ratio": aspect_ratio,

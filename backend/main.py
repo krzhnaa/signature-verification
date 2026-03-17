@@ -1,9 +1,11 @@
 import logging
+from io import BytesIO
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from PIL import Image
 
 from services.verifier import SignatureVerifier
 
@@ -16,14 +18,14 @@ logger = logging.getLogger("signature-verifier")
 
 app = FastAPI(
     title="ML-Based Signature Verification System",
-    description="Single-upload signature verification API powered by ResNet18 embeddings.",
-    version="2.0.0",
+    description="Lightweight signature verification API optimized for low-resource deployment environments.",
+    version="3.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -60,7 +62,17 @@ async def verify_signature(
 ) -> JSONResponse:
     try:
         logger.info("Received verification request for user=%s file=%s", user, file.filename)
-        payload = verifier.verify(uploaded_bytes=await file.read(), filename=file.filename, user=user)
+        uploaded_bytes = await file.read()
+        if not uploaded_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        try:
+            with Image.open(BytesIO(uploaded_bytes)) as image:
+                image.verify()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid image file.") from exc
+
+        payload = verifier.verify(uploaded_bytes=uploaded_bytes, filename=file.filename, user=user)
         logger.info(
             "Verification completed for user=%s avg=%.4f max=%.4f result=%s",
             user,
